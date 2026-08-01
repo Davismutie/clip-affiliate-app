@@ -16,3 +16,33 @@ python -c "from app import db; db.init_database()"
 # Start the application
 echo "🌟 Starting application..."
 gunicorn --bind 0.0.0.0:5000 --workers 4 app:app
+
+
+## Deployment Instructions 📦
+
+### 1. **Push to GitHub**
+```bash
+git init
+git add .
+git commit -m "Initial commit: Clip Affiliate AI"
+git remote add origin https://github.com/yourusername/clip-affiliate-ai.git
+git push -u origin main
+
+vercel deployment 
+{
+  "builds": [
+    {
+      "src": "app.py",
+      "use": "@vercel/python"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "app.py"
+    }
+  ]
+}
+
+vercel --prod
+
