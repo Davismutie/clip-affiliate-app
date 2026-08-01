@@ -1,0 +1,43 @@
+import os
+import sqlite3
+from flask import Flask, jsonify, render_template_string
+
+app = Flask(__name__)
+
+# Health check
+@app.route('/health')
+def health():
+    return jsonify({
+        'status': 'healthy',
+        'app': 'Clip Affiliate AI',
+        'version': '1.0.0'
+    })
+
+@app.route('/')
+def index():
+    return '''
+    <h1>🤖 Clip Affiliate AI</h1>
+    <p>Your AI marketing assistant is running!</p>
+    <ul>
+        <li><a href="/health">Health Check</a></li>
+        <li><a href="/ai-dashboard">AI Dashboard</a></li>
+    </ul>
+    '''
+
+# Simple dashboard
+@app.route('/ai-dashboard')
+def dashboard():
+    return '''
+    <h1>🤖 AI Dashboard</h1>
+    <p>Market intelligence and recommendations</p>
+    <div style="padding: 20px; background: #f0f0f0; border-radius: 8px;">
+        <h3>System Status</h3>
+        <p>✅ Application is running on Render</p>
+        <p>🔄 Monitoring: Active</p>
+        <p>📊 Ready to analyze markets</p>
+    </div>
+    '''
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
