@@ -1,0 +1,280 @@
+from flask import Flask, jsonify, render_template_string, request
+import sqlite3
+
+app = Flask(__name__)
+DB_NAME = "clip_affiliate.db"
+
+# -------------------------------------------------------------------------
+# DATABASE INITIALIZATION (SQL)
+# -------------------------------------------------------------------------
+def init_db():
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS products (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            price_usd REAL NOT NULL,
+            category TEXT,
+            image TEXT,
+            affiliate_link TEXT
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS transactions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            merchant_id TEXT,
+            customer_phone TEXT,
+            amount REAL,
+            currency TEXT,
+            status TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    # Insert default mock products if empty
+    cursor.execute("SELECT COUNT(*) FROM products")
+    if cursor.fetchone()[0] == 0:
+        sample_products = [
+            ("Wireless Earbuds Pro", 29.99, "Electronics", "https://images.unsplash.com/photo-1572536147248-ac59a8abfa4b", "https://s.click.aliexpress.com/e/_sample1"),
+            ("Smart Fitness Watch", 45.50, "Wearables", "https://images.unsplash.com/photo-1523275335684-37898b6baf30", "https://s.click.aliexpress.com/e/_sample2"),
+            ("Mini Drone 4K Camera", 89.00, "Gadgets", "https://images.unsplash.com/photo-1507582020474-9a35b7d455d9", "https://s.click.aliexpress.com/e/_sample3")
+        ]
+        cursor.executemany("INSERT INTO products (title, price_usd, category, image, affiliate_link) VALUES (?, ?, ?, ?, ?)", sample_products)
+        conn.commit()
+    conn.close()
+
+init_db()
+
+# -------------------------------------------------------------------------
+# FRONTEND TEMPLATE (HTML, CSS & JavaScript Combined)
+# -------------------------------------------------------------------------
+HTML_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Clip Affiliate - East Africa Hub</title>
+    <style>
+        :root { --primary: #ff4757; --dark: #2f3542; --light: #f1f2f6; --success: #2ed573; }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        body { background-color: var(--light); color: var(--dark); }
+        header { background: var(--dark); color: white; padding: 1rem 2rem; display: flex; justify-content: space-between; align-items: center; }
+        header h1 { color: var(--primary); font-size: 1.5rem; }
+        .currency-selector select { padding: 0.5rem; border-radius: 4px; border: none; font-weight: bold; }
+        .container { max-width: 1200px; margin: 2rem auto; padding: 0 1rem; }
+        .hero { background: linear-gradient(135deg, #ff4757, #ff6b81); color: white; padding: 3rem; border-radius: 8px; text-align: center; margin-bottom: 2rem; }
+        .hero h2 { font-size: 2.5rem; margin-bottom: 0.5rem; }
+        .catalog { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 2rem; }
+        .card { background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.1); display: flex; flex-direction: column; justify-content: space-between; }
+        .card img { width: 100%; height: 200px; object-fit: cover; }
+        .card-body { padding: 1.5rem; }
+        .card-body h3 { font-size: 1.2rem; margin-bottom: 0.5rem; }
+        .price { font-size: 1.3rem; font-weight: bold; color: var(--primary); margin-bottom: 1rem; }
+        .btn-group { display: flex; gap: 0.5rem; }
+        .btn { flex: 1; padding: 0.75rem; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; text-align: center; text-decoration: none; }
+        .btn-affiliate { background: #ffa502; color: white; }
+        .btn-checkout { background: var(--success); color: white; }
+        .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); justify-content: center; align-items: center; }
+        .modal-content { background: white; padding: 2rem; border-radius: 8px; width: 90%; max-width: 400px; text-align: center; }
+        .modal-content input { width: 100%; padding: 0.75rem; margin: 1rem 0; border: 1px solid #ccc; border-radius: 4px; }
+    </style>
+</head>
+<body>
+
+    <header>
+        <h1>Clip Affiliate 🛒</h1>
+        <div class="currency-selector">
+            <label for="currency">Currency: </label>
+            <select id="currency" onchange="updateCurrency()">
+                <option value="UGX">UGX (Uganda)</option>
+                <option value="KES">KES (Kenya)</option>
+                <option value="USD">USD ($)</option>
+            </select>
+        </div>
+    </header>
+
+    <div class="container">
+        <div class="hero">
+            <h2>East Africa Cross-Border Dropshipping & Affiliate Hub</h2>
+            <p>Kampala & Nairobi's Premier Sourcing Engine with Mobile Money Direct Checkout.</p>
+        </div>
+
+        <div class="catalog" id="product-catalog">
+            <!-- Dynamically populated via JavaScript -->
+        </div>
+    </div>
+
+    <!-- Mobile Money Checkout Modal -->
+    <div class="modal" id="checkout-modal">
+        <div class="modal-content">
+            <h3>Mobile Money Express Checkout</h3>
+            <p>Send payment directly to Merchant:</p>
+            <p style="font-size: 1.2rem; font-weight: bold; color: #ff4757; margin: 0.5rem 0;">+256 757 202891</p>
+            <p id="modal-price-display" style="margin-bottom: 1rem;"></p>
+            <input type="text" id="buyer-phone" placeholder="Enter Your Mobile Number (e.g. 0757XXXXXX)">
+            <button class="btn btn-checkout" onclick="processPayment()">Authorize & Pay Now</button>
+            <button class="btn" style="background:#ddd; margin-top:0.5rem;" onclick="closeModal()">Cancel</button>
+        </div>
+    </div>
+
+    <script>
+        let products = [];
+        let rates = { USD: 1, UGX: 3700, KES: 130 }; // Exchange rates base USD
+        let currentItem = null;
+
+        async function fetchProducts() {
+            const res = await fetch('/api/products');
+            products = await res.json();
+            renderCatalog();
+        }
+
+        function renderCatalog() {
+            const currency = document.getElementById('currency').value;
+            const catalogEl = document.getElementById('product-catalog');
+            catalogEl.innerHTML = '';
+
+            products.forEach(p => {
+                let convertedPrice = p.price_usd * rates[currency];
+                let formattedPrice = currency === 'USD' ? '$' + convertedPrice.toFixed(2) : currency + ' ' + Math.round(convertedPrice).toLocaleString();
+
+                catalogEl.innerHTML += `
+                    <div class="card">
+                        <img src="${p.image}" alt="${p.title}">
+                        <div class="card-body">
+                            <h3>${p.title}</h3>
+                            <div class="price">${formattedPrice}</div>
+                            <div class="btn-group">
+                                <a href="${p.affiliate_link}" target="_blank" class="btn btn-affiliate">AliExpress Link</a>
+                                <button class="btn btn-checkout" onclick="openCheckout('${p.title}', ${p.price_usd})">Buy Now</button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+        }
+
+        function updateCurrency() {
+            renderCatalog();
+        }
+
+        function openCheckout(title, priceUsd) {
+            currentItem = { title, priceUsd };
+            const currency = document.getElementById('currency').value;
+            let converted = priceUsd * rates[currency];
+            let displayStr = currency === 'USD' ? '$' + converted.toFixed(2) : currency + ' ' + Math.round(converted).toLocaleString();
+            
+            document.getElementById('modal-price-display').innerText = `Total: ${displayStr} for ${title}`;
+            document.getElementById('checkout-modal').style.display = 'flex';
+        }
+
+        function closeModal() {
+            document.getElementById('checkout-modal').style.display = 'none';
+        }
+
+        async function processPayment() {
+            const phone = document.getElementById('buyer-phone').value;
+            if(!phone) { alert('Please enter your mobile phone number.'); return; }
+            
+            const currency = document.getElementById('currency').value;
+            const amount = currentItem.priceUsd * rates[currency];
+
+            const response = await fetch('/api/pay/mobile-money', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    merchant_phone: "+256757202891",
+                    customer_phone: phone,
+                    amount: amount,
+                    currency: currency,
+                    item: currentItem.title
+                })
+            });
+
+            const result = await response.json();
+            alert(result.message);
+            closeModal();
+        }
+
+        fetchProducts();
+    </script>
+</body>
+</html>
+"""
+
+# -------------------------------------------------------------------------
+# BACKEND API ENDPOINTS (PYTHON / FLASK)
+# -------------------------------------------------------------------------
+
+@app.route("/")
+def index():
+    return render_template_string(HTML_TEMPLATE)
+
+@app.route("/api/products", methods=["GET"])
+def get_products():
+    """API endpoint providing catalog data for the storefront & external partners."""
+    conn = sqlite3.connect(DB_NAME)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM products")
+    rows = cursor.fetchall()
+    conn.close()
+    return jsonify([dict(row) for row in rows])
+
+@app.route("/api/pay/mobile-money", methods=["POST"])
+def mobile_money_payment():
+    """Checkout API endpoint routing payments to +256757202891"""
+    data = request.json
+    merchant_phone = data.get("merchant_phone", "+256757202891")
+    customer_phone = data.get("customer_phone")
+    amount = data.get("amount")
+    currency = data.get("currency")
+    item = data.get("item")
+
+    # Log transaction in SQLite database
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO transactions (merchant_id, customer_phone, amount, currency, status)
+        VALUES (?, ?, ?, ?, ?)
+    """, (merchant_phone, customer_phone, amount, currency, "PENDING_STK_PUSH"))
+    conn.commit()
+    conn.close()
+
+    # Simulation response for mobile money prompt trigger
+    return jsonify({
+        "status": "success",
+        "message": f"STK Push payment prompt sent to {customer_phone}. Confirm payment of {currency} {amount:.2f} to merchant account {merchant_phone}."
+    })
+
+@app.route("/api/v1/east-africa/sync", methods=["POST"])
+def east_africa_partner_api():
+    """
+    Cross-Border API designed for external e-commerce sites in Kampala & Nairobi
+    to pull unified products and execute dropshipping synchronization.
+    """
+    api_key = request.headers.get("Authorization")
+    # Simple validation mock for regional merchants
+    if api_key != "Bearer clip_ea_live_secret":
+        return jsonify({"error": "Unauthorized regional API key"}), 401
+
+    incoming_data = request.json
+    store_location = incoming_data.get("hub_location", "Kampala") # Kampala or Nairobi
+    
+    conn = sqlite3.connect(DB_NAME)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM products")
+    products = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+
+    return jsonify({
+        "status": "synchronized",
+        "region_hub": store_location,
+        "connected_node": "Clip Affiliate East Africa Gateway",
+        "aliexpress_dropshipping_active": True,
+        "catalog": products
+    })
+
+if __name__ == "__main__":
+    app.run(debug=True, port=5000)
