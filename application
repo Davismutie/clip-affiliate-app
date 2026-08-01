@@ -16,3 +16,150 @@ RAILWAY_TOKEN - Your Railway deployment token
 HEROKU_API_KEY - Your Heroku API key
 HEROKU_EMAIL - Your Heroku email
 SECRET_KEY - Your Flask secret key
+
+# Flask Configuration
+SECRET_KEY=your-secret-key-here
+DEBUG=False
+PORT=5000
+
+# Database
+DATABASE_URL=clip_affiliate.db
+
+# API Keys (Get these from respective services)
+JUMIA_API_KEY=your-jumia-api-key
+AFRICASTALKING_API_KEY=your-africastalking-key
+TWILIO_ACCOUNT_SID=your-twilio-sid
+TWILIO_AUTH_TOKEN=your-twilio-token
+
+# Marketplaces
+JUMIA_KE_URL=https://www.jumia.co.ke
+JUMIA_UG_URL=https://www.jumia.ug
+
+# AI Monitoring
+MONITORING_INTERVAL=6
+AUTO_START_MONITORING=False
+
+# Deployment
+GITHUB_ACTIONS=True
+
+clip-affiliate-ai/
+├── app.py
+├── requirements.txt
+├── .env.example
+├── .gitignore
+├── Dockerfile
+├── docker-compose.yml
+├── .github/
+│   └── workflows/
+│       ├── deploy.yml
+│       └── test.yml
+├── scripts/
+│   ├── deploy.sh
+│   └── setup.sh
+└── README.md
+
+FROM python:3.9-slim
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements and install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application
+COPY . .
+
+# Create non-root user
+RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
+USER appuser
+
+# Expose port
+EXPOSE 5000
+
+# Run with gunicorn
+CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "4", "app:app"]
+
+version: '3.8'
+
+services:
+  web:
+    build: .
+    ports:
+      - "5000:5000"
+    environment:
+      - DEBUG=False
+      - PORT=5000
+      - DATABASE_URL=/app/data/clip_affiliate.db
+      - AUTO_START_MONITORING=True
+      - MONITORING_INTERVAL=6
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+ubuntu
+name: Deploy to Production
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      
+      - name: Run tests
+        run: |
+          python -c "import app; print('✅ Application imports successfully')"
+          python -c "from app import app; app.test_client().get('/health')"
+  
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Deploy to Render
+        uses: johnbeynon/render-deploy-action@v0.0.8
+        with:
+          service-id: ${{ secrets.RENDER_SERVICE_ID }}
+          api-key: ${{ secrets.RENDER_API_KEY }}
+      
+      - name: Deploy to Railway
+        uses: bervProject/railway-deploy@v1.0.0
+        with:
+          railway_token: ${{ secrets.RAILWAY_TOKEN }}
+          service: clip-affiliate-ai
+      
+      # Alternative: Deploy to Heroku
+      - name: Deploy to Heroku
+        uses: akhileshns/heroku-deploy@v3.12.12
+        with:
+          heroku_api_key: ${{ secrets.HEROKU_API_KEY }}
+          heroku_app_name: "clip-affiliate-ai"
+          heroku_email: ${{ secrets.HEROKU_EMAIL }}
+
