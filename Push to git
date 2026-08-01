@@ -1,0 +1,4 @@
+# In your terminal
+git add app.py requirements.txt render.yaml
+git commit -m "Fix deployment: Add minimal working app"
+git push origin main
